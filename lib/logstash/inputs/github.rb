@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "logstash/inputs/base"
 require "logstash/namespace"
+require "logstash/timestamp"
 require "socket"
 require "json"
 
@@ -25,12 +26,26 @@ class LogStash::Inputs::GitHub < LogStash::Inputs::Base
     require "ftw"
   end # def register
 
+
   public
   def run(output_queue)
     @server = FTW::WebServer.new(@ip, @port) do |request, response|
         body = request.read_body
         begin
-          event = LogStash::Event.new(JSON.parse(body))
+          parsed_body = JSON.parse(body)
+          ts = parsed_body["repository"]["created_at"]
+          if ts
+            parsed_body["repository"]["created_at"] = init_timestamp(ts) ? init_timestamp(ts) : "" + ts.to_s
+          end
+          ts = parsed_body["repository"]["pushed_at"]
+          if ts
+            parsed_body["repository"]["pushed_at"] = init_timestamp(ts) ? init_timestamp(ts) : "" + ts.to_s
+          end
+          ts = parsed_body["repository"]["updated_at"]
+          if ts
+            parsed_body["repository"]["updated_at"] = init_timestamp(ts) ? init_timestamp(ts) : "" + ts.to_s
+          end
+          event = LogStash::Event.new(parsed_body)
         rescue JSON::ParserError => e
           @logger.info("JSON parse failure. Falling back to plain-text", :error => e, :data => body)
           event = LogStash::Event.new("message" => body, "tags" => "_invalidjson")
@@ -56,6 +71,15 @@ class LogStash::Inputs::GitHub < LogStash::Inputs::Base
     end
     @server.run
   end # def run
+
+  def init_timestamp(o)
+    begin
+      timestamp = LogStash::Timestamp.coerce(o)
+      return timestamp if timestamp
+    rescue LogStash::TimestampParserError => e
+    end
+  end
+
 
   def close
     @server.stop
